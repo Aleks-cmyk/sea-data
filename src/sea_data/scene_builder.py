@@ -824,9 +824,16 @@ def _sea_material(scenario: Scenario, haze: Any) -> Any:
         nodes.math("MULTIPLY", land.outputs["Fac"], land_roughness - water_roughness),
     )
 
+    # Water's dielectric Fresnel reflects the sky almost totally at the
+    # grazing angles a distant landmass is usually seen at, washing it out
+    # to near sky-colour regardless of its base colour. Land isn't water,
+    # so its specular response is turned off rather than merely roughened.
+    surface_specular = nodes.math("MULTIPLY", 0.5, not_land)
+
     water = nodes.node("ShaderNodeBsdfPrincipled")
     nodes.link(base_color, water.inputs["Base Color"])
     nodes.link(surface_roughness, water.inputs["Roughness"])
+    nodes.link(surface_specular, water.inputs["Specular IOR Level"])
     water.inputs["IOR"].default_value = 1.333
     nodes.link(bump.outputs["Normal"], water.inputs["Normal"])
     whitecap = nodes.node("ShaderNodeBsdfPrincipled")
