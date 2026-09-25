@@ -131,10 +131,33 @@ class AnnotationConfig:
         min_visible_pixels: Objects with fewer visible pixels are not labelled.
         min_transmittance: Objects whose atmospheric transmittance is lower
             (i.e. hidden by fog or haze) are not labelled.
+        min_horizon_transmittance: The horizon is marked invisible when the
+            atmospheric transmittance over its distance is lower than this,
+            i.e. when fog or haze would blend it into the sky so much that a
+            human could not point to it.
     """
 
     min_visible_pixels: int = 12
     min_transmittance: float = 0.03
+    min_horizon_transmittance: float = 0.05
+
+
+@dataclass(frozen=True)
+class LandConfig:
+    """Randomisation ranges for an optional distant coastline.
+
+    A low silhouette is placed along part of the horizon, never across its
+    full width, so the sea horizon stays visible on at least one side.
+
+    Attributes:
+        probability: Chance that land appears in a given image.
+        height_m: Silhouette height above mean sea level in metres.
+        width_deg: Angular width of the coastline along the horizon.
+    """
+
+    probability: float = 0.2
+    height_m: Interval = (5.0, 80.0)
+    width_deg: Interval = (15.0, 70.0)
 
 
 def _default_weather() -> dict[str, WeatherPreset]:
@@ -186,6 +209,7 @@ class SimulatorConfig:
         weather: Weather presets by name.
         platforms: Camera platform presets by name.
         object_classes: Object category settings by class name.
+        land: Randomisation ranges for the optional distant coastline.
         beaufort_weights: Sampling weights of Beaufort sea states 0 to 8.
         sun_elevation_deg: Sun elevation range; negative values give twilight.
         objects_per_image: Inclusive range of objects placed per image.
@@ -202,6 +226,7 @@ class SimulatorConfig:
     object_classes: dict[str, ObjectClassConfig] = field(
         default_factory=_default_object_classes
     )
+    land: LandConfig = field(default_factory=LandConfig)
     beaufort_weights: tuple[float, ...] = (
         0.04,
         0.10,
@@ -244,6 +269,8 @@ class SimulatorConfig:
         low, high = self.objects_per_image
         if not 0 <= low <= high <= 254:
             raise ConfigError("objects_per_image must satisfy 0 <= low <= high <= 254")
+        if not 0.0 <= self.land.probability <= 1.0:
+            raise ConfigError("land.probability must be between 0 and 1")
         for name, presets in (
             ("weather", self.weather),
             ("platforms", self.platforms),

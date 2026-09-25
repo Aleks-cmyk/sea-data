@@ -45,6 +45,18 @@ uv run sea-data generate -o data/eevee -n 1000 --engine BLENDER_EEVEE
 
 # Rebuild COCO/YOLO/horizon files after deleting or editing meta files
 uv run sea-data index data/run1
+
+# Check that annotations are internally consistent (bounds, valid flags,
+# COCO/YOLO/horizon.csv vs. meta files); exits 1 and lists issues if not
+uv run sea-data verify data/run1
+
+# Draw ground-truth boxes and the horizon line onto the images for a visual
+# sanity check; writes to data/run1/debug/ by default
+uv run sea-data visualize data/run1 --limit 20
+
+# Interactive GUI: page through a dataset's images with the ground-truth
+# overlay and metadata panel (arrow keys to move, "Open..." to switch datasets)
+uv run sea-data view data/run1
 ```
 
 Existing images are skipped, so an interrupted run resumes when re-run
@@ -65,8 +77,14 @@ height = 1080
 samples = 96
 
 [annotation]
-min_visible_pixels = 20     # smaller objects are not labelled
-min_transmittance = 0.05    # objects hidden by fog are not labelled
+min_visible_pixels = 20            # smaller objects are not labelled
+min_transmittance = 0.05           # objects hidden by fog are not labelled
+min_horizon_transmittance = 0.08   # horizon blended into fog is marked not visible
+
+[land]
+probability = 0.3           # chance a distant coastline appears
+height_m = [10.0, 120.0]
+width_deg = [20.0, 60.0]    # capped further so it never spans the full view
 
 [weather.fog]
 weight = 0.3                # sampling weight; 0 disables a preset
@@ -86,6 +104,26 @@ length_m = [2.0, 6.0]
 
 The configuration used for a run is saved as `config.json` in the output.
 
+## Checking annotations
+
+- `sea-data verify <dataset>` re-derives `annotations_coco.json`,
+  `labels/*.txt` and `horizon.csv` from the `meta/*.json` files and reports
+  any mismatch, out-of-bounds box, wrong `valid` flag, unknown category or
+  missing image/mask file. Exit code is `1` if any issues are found.
+- `sea-data visualize <dataset>` stacks the original photo above a copy with
+  the object boxes (category colour, or grey when filtered out as
+  `valid: false`), the amodal box in white, and the horizon line in yellow
+  drawn on top, plus a side panel listing horizon (`visible`, `transmittance`,
+  `mask_error_px`, `mask_agreement`), atmosphere (weather, visibility, cloud
+  cover, aerosol density) and every object's category/distance/valid flag.
+  Saves to `<dataset>/debug/` (override with `--overlay-dir`); open the PNGs
+  with any image viewer, or pass `--limit N` to only render the first `N`
+  images.
+- `sea-data view <dataset>` opens a small Tk GUI showing the same
+  original/overlay/metadata image, with Prev/Next buttons (or the left/right
+  arrow keys) to page through the dataset and an "Open..." button to switch
+  datasets.
+
 ## Ground-truth conventions
 
 - **Image coordinates:** origin top-left, `x` right, `y` down, boxes as
@@ -98,8 +136,12 @@ The configuration used for a run is saved as `config.json` in the output.
   horizontal due to camera height. The sea surface is modelled as
   `z = -r² / 2R`, so the rendered horizon matches the analytic one; each
   frame's `mask_error_px` (typically < 0.5 px) checks this against the
-  semantic mask. `mask_agreement` is lower when waves or objects hide the
-  horizon, and `transmittance` shows how visible it is through haze.
+  semantic mask. `mask_agreement` is lower when waves, objects or land hide
+  the horizon, and `transmittance` shows how visible it is through haze.
+  `visible` is `false` whenever the horizon falls outside the image, only
+  grazes a corner, or is fogged in enough that a human could not point to it
+  (`transmittance` below `annotation.min_horizon_transmittance`) — never
+  `true` for a horizon that cannot actually be seen.
 - **Camera:** world `x` east, `y` north, `z` up; yaw is a compass bearing,
   positive pitch looks up, positive roll dips the camera's right side.
   `meta/<id>.json` stores intrinsics and the camera-to-world matrix.
@@ -110,10 +152,12 @@ The configuration used for a run is saved as `config.json` in the output.
 - `cli.py` writes job files and starts Blender workers
   (`blender --background --python src/sea_data/blender_worker.py`).
 - `scene_builder.py` builds the physical sky (with sun disc), procedural
-  clouds, horizon haze and auto-exposure from a small calibration render. It
-  also builds the sea: a curved polar-grid mesh with two FFT Ocean layers
-  (swell and wind chop with whitecaps), each scaled to the WMO wave height for
-  the wind speed.
+  clouds (sometimes crisper-edged, see `CLOUD_SHARP_PROBABILITY`), horizon
+  haze and auto-exposure from a small calibration render. It also builds the
+  sea: a curved polar-grid mesh with two FFT Ocean layers (swell and wind
+  chop with whitecaps), each scaled to the WMO wave height for the wind
+  speed, with an optional distant coastline silhouette baked into the mesh
+  (`land` in the config; never spans the full horizon width).
 - `vessels.py` builds the objects and floats them on the evaluated wave
   surface (heave, pitch and roll).
 - `render.py` renders the RGB image and then a flat-shaded Workbench pass that

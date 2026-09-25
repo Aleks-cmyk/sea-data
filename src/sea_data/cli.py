@@ -4,6 +4,9 @@ Subcommands:
     * ``generate``: sample scenarios, render them in Blender, build the index.
     * ``sample``: print sampled scenarios as JSON without rendering.
     * ``index``: rebuild COCO/YOLO/horizon files from existing metadata.
+    * ``verify``: check a dataset's annotations for internal consistency.
+    * ``visualize``: draw ground-truth boxes and horizons onto the images.
+    * ``view``: open an interactive GUI to page through a dataset.
 """
 
 import argparse
@@ -19,6 +22,8 @@ from pathlib import Path
 from sea_data.annotations import build_index
 from sea_data.config import ConfigError, SimulatorConfig, load_config
 from sea_data.scenario import Scenario, sample_scenarios
+from sea_data.verify import verify_dataset
+from sea_data.visualize import visualize_dataset
 
 WORKER_SCRIPT = Path(__file__).with_name("blender_worker.py")
 JOB_DIR = "jobs"
@@ -55,6 +60,17 @@ def _parser() -> argparse.ArgumentParser:
 
     index = sub.add_parser("index", help="rebuild annotation files of a dataset")
     index.add_argument("output", type=Path, help="dataset folder")
+
+    verify = sub.add_parser("verify", help="check annotation correctness of a dataset")
+    verify.add_argument("output", type=Path, help="dataset folder")
+
+    viz = sub.add_parser("visualize", help="draw ground-truth boxes/horizon on images")
+    viz.add_argument("output", type=Path, help="dataset folder")
+    viz.add_argument("--overlay-dir", type=Path, help="folder for overlay images")
+    viz.add_argument("--limit", type=int, help="max number of images to draw")
+
+    view = sub.add_parser("view", help="open an interactive viewer for a dataset")
+    view.add_argument("output", type=Path, help="dataset folder")
     return parser
 
 
@@ -227,6 +243,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{summary.images} images, {summary.objects} labelled objects, "
                 f"{summary.horizons} visible horizons"
             )
+            return 0
+        if args.command == "verify":
+            issues = verify_dataset(args.output)
+            for issue in issues:
+                print(issue, file=sys.stderr)
+            print(f"{len(issues)} issue(s) found in {args.output}")
+            return 1 if issues else 0
+        if args.command == "visualize":
+            written = visualize_dataset(args.output, args.overlay_dir, args.limit)
+            target = args.overlay_dir or args.output / "debug"
+            print(f"wrote {len(written)} overlay image(s) to {target}")
+            return 0
+        if args.command == "view":
+            from sea_data.gui import run_viewer
+
+            run_viewer(args.output)
             return 0
         config = load_config(args.config)
         if args.command == "sample":

@@ -9,7 +9,9 @@ authors = [
     { name = "Christian Rankl", email = "christian.rankl@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pillow>=12.3.0",
+]
 
 [project.scripts]
 sea-data = "sea_data:main"

@@ -6,17 +6,23 @@ Lighting model:
     The world uses Blender's physical sky texture including the sun disc, so
     the sun, sky and their ratio are physically consistent. A procedural cloud
     layer is blended over the sky (clouds covering the sun disc also remove
-    direct sunlight), and horizon haze is blended in with a path length that
-    grows towards the horizon. A tiny panoramic calibration render measures the
-    sky brightness to derive the fog colour, cloud colour and auto-exposure.
+    direct sunlight, and a random fraction of scenarios get crisper-edged
+    clouds instead of the soft default), and horizon haze is blended in with
+    a path length that grows towards the horizon. A tiny panoramic calibration
+    render measures the sky brightness to derive the fog colour, cloud colour
+    and auto-exposure.
 
 Sea model:
     A single polar-grid mesh centred below the camera covers the camera's
     field of view out to beyond the geometric horizon. Its rest shape follows
-    the Earth's curvature (``z = -r^2 / 2R``), so the rendered horizon matches
-    :func:`sea_data.geometry.horizon_line`. An Ocean modifier adds FFT waves,
-    and a Geometry Nodes modifier fades them out with distance where the mesh
-    becomes too coarse to represent them; a bump map carries the detail there.
+    the Earth's curvature (``z = -r^2 / 2R``), optionally raised by a distant
+    coastline silhouette that spans only part of the horizon (see
+    :func:`_land_offsets`), so the rendered horizon matches
+    :func:`sea_data.geometry.horizon_line` where no land is present. An Ocean
+    modifier adds FFT waves, and a Geometry Nodes modifier fades them out with
+    distance where the mesh becomes too coarse to represent them (further out
+    for rougher sea states); a bump map, boosted in the faded region, carries
+    the visual detail there instead of an unrealistic flat band.
 """
 
 import math
@@ -31,10 +37,13 @@ from mathutils import Matrix
 
 from sea_data.config import RenderConfig
 from sea_data.geometry import EARTH_RADIUS_M, PinholeCamera, horizon_distance
-from sea_data.scenario import Scenario, SeaState
+from sea_data.scenario import Land, Scenario, SeaState
 
 HAZE_SCALE_HEIGHT_M = 1_000.0
 """Height of the haze layer used for the sky's horizon brightening."""
+
+CLOUD_SHARP_PROBABILITY = 0.25
+"""Chance that a scenario gets crisper-edged clouds instead of the soft default."""
 
 _SKY_WHITE_LEVEL = 0.85
 _GPU_BACKENDS = ("OPTIX", "CUDA", "HIP", "ONEAPI", "METAL")
@@ -246,6 +255,7 @@ def build_world(scene: Any, scenario: Scenario) -> dict[str, Any]:
     # Clouds: noise projected onto a flat layer, thresholded by cloud cover.
     projected = nodes.vmath("DIVIDE", direction, nodes.math("MAXIMUM", elevation, 0.02))
     rng = np.random.default_rng(atmosphere.cloud_seed)
+    sharp = bool(rng.random() < CLOUD_SHARP_PROBABILITY)
     offset = tuple(float(v) for v in rng.uniform(-1000.0, 1000.0, size=3))
     layer = nodes.vmath(
         "ADD", nodes.vmath("MULTIPLY", projected, (0.9, 0.9, 0.0)), offset
@@ -256,8 +266,9 @@ def build_world(scene: Any, scenario: Scenario) -> dict[str, Any]:
     noise.inputs["Roughness"].default_value = 0.6
     nodes.link(layer, noise.inputs["Vector"])
     threshold = 0.68 - 0.40 * cover
+    edge_soft, edge_spread = (0.015, 0.05) if sharp else (0.06, 0.2)
     density = nodes.map_range(
-        noise.outputs["Fac"], threshold - 0.06, threshold + 0.2, 0.0, 1.0
+        noise.outputs["Fac"], threshold - edge_soft, threshold + edge_spread, 0.0, 1.0
     )
     near_horizon = nodes.map_range(elevation, 0.0, 0.08, cover**2, 1.0)
     cloud_switch = nodes.node("ShaderNodeValue", label="cloud_switch")
@@ -583,12 +594,17 @@ def _polar_grid(camera: PinholeCamera, extent_m: float) -> tuple[Any, Any]:
 
 
 def _grid_mesh(
-    name: str, radii: Any, bearings: Any, ring_weights: dict[str, Any]
+    name: str,
+    radii: Any,
+    bearings: Any,
+    ring_weights: dict[str, Any],
+    height_offset: Any | None = None,
 ) -> Any:
     rr, bb = np.meshgrid(radii, bearings, indexing="ij")
-    verts = np.stack(
-        (rr * np.sin(bb), rr * np.cos(bb), -(rr**2) / (2.0 * EARTH_RADIUS_M)), axis=-1
-    ).reshape(-1, 3)
+    z = -(rr**2) / (2.0 * EARTH_RADIUS_M)
+    if height_offset is not None:
+        z = z + height_offset
+    verts = np.stack((rr * np.sin(bb), rr * np.cos(bb), z), axis=-1).reshape(-1, 3)
     rows, cols = rr.shape
     index = np.arange(rows * cols).reshape(rows, cols)
     quads = np.stack(
@@ -612,6 +628,48 @@ def _grid_mesh(
             "value", np.repeat(weights, len(bearings)).astype(np.float32)
         )
     return mesh
+
+
+def _smoothstep(edge0: float, edge1: float, x: Any) -> Any:
+    t = np.clip((x - edge0) / max(edge1 - edge0, 1e-9), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _land_offsets(
+    radii: Any, bearings: Any, land: Land, horizon_m: float
+) -> Any | None:
+    """Return a per-vertex height offset for an optional coastline silhouette.
+
+    The silhouette sits in a band around ``0.5`` to ``0.9`` times the horizon
+    distance (well past where waves have already faded to their rest shape,
+    see :func:`_wave_fades`) and tapers to zero at both its angular edges, so
+    it never covers the full width of the visible horizon.
+
+    Args:
+        radii: Ring radii of the sea grid, in metres.
+        bearings: Column bearings of the sea grid, in radians.
+        land: Land parameters; ``height_offset`` is ``None`` when absent.
+        horizon_m: Distance to the geometric horizon, in metres.
+
+    Returns:
+        Array of shape ``(len(radii), len(bearings))`` in metres, or ``None``
+        if no land was sampled for this scenario.
+    """
+    if not land.present:
+        return None
+    centre = math.radians(land.bearing_deg)
+    half_width = math.radians(land.width_deg) / 2.0
+    delta = np.abs(np.mod(bearings - centre + math.pi, 2.0 * math.pi) - math.pi)
+    edge = max(0.2 * half_width, 1e-6)
+    angular = 1.0 - _smoothstep(half_width - edge, half_width, delta)
+
+    near = 0.45 * horizon_m
+    plateau = near + 0.12 * horizon_m
+    far = min(float(radii[-1]) - 1.0, 0.92 * horizon_m)
+    fall = far - 0.05 * horizon_m
+    radial = _smoothstep(near, plateau, radii) * (1.0 - _smoothstep(fall, far, radii))
+
+    return land.height_m * radial[:, None] * angular[None, :]
 
 
 def _fade_node_group(rest_name: str, fade_name: str, store: str | None = None) -> Any:
@@ -682,7 +740,14 @@ def _sea_material(scenario: Scenario, haze: Any) -> Any:
     nodes.link(nodes.vmath("MULTIPLY", coords, (1.0, 1.0, 0.0)), ripples.inputs[0])
     bump = nodes.node("ShaderNodeBump")
     bump.inputs["Strength"].default_value = 1.0
-    bump.inputs["Distance"].default_value = 0.02 + 0.05 * sea.beaufort
+    # Displaced geometry fades to flat towards the horizon (see _wave_fades);
+    # boost the bump amplitude there so the surface keeps looking textured
+    # instead of turning into an unrealistic flat, calm band.
+    base_distance = 0.02 + 0.05 * sea.beaufort
+    fade_boost = nodes.map_range(fade.outputs["Fac"], 0.0, 1.0, 2.5, 1.0)
+    nodes.link(
+        nodes.math("MULTIPLY", base_distance, fade_boost), bump.inputs["Distance"]
+    )
     nodes.link(ripples.outputs["Fac"], bump.inputs["Height"])
 
     water = nodes.node("ShaderNodeBsdfPrincipled")
@@ -702,15 +767,18 @@ def _sea_material(scenario: Scenario, haze: Any) -> Any:
 
 
 def _wave_fades(
-    radii: Any, wavelength_m: float, step: float, horizon_m: float
+    radii: Any, wavelength_m: float, step: float, horizon_m: float, reach: float = 1.0
 ) -> tuple[Any, float, float]:
     """Return per-ring wave weights that fade out where the mesh gets coarse.
 
     Waves are faded before ``0.7`` times the horizon distance so that the
-    horizon silhouette stays exactly on the analytic curve.
+    horizon silhouette stays exactly on the analytic curve. ``reach`` pushes
+    the fade further out for rougher sea states, so a visible calm band does
+    not appear well before the horizon while whitecaps churn in the
+    foreground.
     """
-    end = min(max(wavelength_m / (6.0 * step), 45.0), 0.7 * horizon_m)
-    start = min(max(wavelength_m / (12.0 * step), 30.0), 0.6 * end)
+    end = min(max(wavelength_m / (6.0 * step), 45.0) * reach, 0.7 * horizon_m)
+    start = min(max(wavelength_m / (12.0 * step), 30.0) * reach, 0.6 * end)
     fade = np.clip((end - radii) / (end - start), 0.0, 1.0)
     return fade * fade * (3.0 - 2.0 * fade), start, end
 
@@ -789,10 +857,21 @@ def build_sea(
     swell_length = sea.peak_wavelength_m
     chop_wind = min(sea.wind_speed_ms, 4.0)
     chop_length = max(0.834 * chop_wind**2, 0.5)
-    swell_fade, fade_start, fade_end = _wave_fades(radii, swell_length, step, horizon_m)
-    chop_fade, _, _ = _wave_fades(radii, chop_length, step, horizon_m)
+    # Rougher seas keep their geometric waves visible further towards the
+    # horizon, so the mesh-resolution fade does not read as an unrealistic
+    # calm band while whitecaps churn in the foreground.
+    reach = 1.0 + 0.18 * sea.beaufort
+    swell_fade, fade_start, fade_end = _wave_fades(
+        radii, swell_length, step, horizon_m, reach
+    )
+    chop_fade, _, _ = _wave_fades(radii, chop_length, step, horizon_m, reach)
+    land_offset = _land_offsets(radii, bearings, scenario.land, horizon_m)
     mesh = _grid_mesh(
-        "Sea", radii, bearings, {"fade": chop_fade, "fade_swell": swell_fade}
+        "Sea",
+        radii,
+        bearings,
+        {"fade": chop_fade, "fade_swell": swell_fade},
+        height_offset=land_offset,
     )
     obj = bpy.data.objects.new("Sea", mesh)
     scene.collection.objects.link(obj)
