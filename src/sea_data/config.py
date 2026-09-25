@@ -139,7 +139,7 @@ class AnnotationConfig:
 
     min_visible_pixels: int = 12
     min_transmittance: float = 0.03
-    min_horizon_transmittance: float = 0.05
+    min_horizon_transmittance: float = 0.01
 
 
 @dataclass(frozen=True)
