@@ -1,7 +1,7 @@
 [project]
 name = "sea-data"
 version = "0.1.0"
-description = "Add your description here"
+description = "Synthetic maritime images with object and horizon ground truth, rendered in Blender"
 readme = "README.md"
 authors = [
     { name = "Christian Rankl", email = "christian.rankl@gmail.com" }
@@ -22,3 +22,23 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.8",
 ]
+
+[tool.ruff]
+line-length = 88
+
+[tool.mypy]
+python_version = "3.14"
+files = ["src", "tests"]
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+# Modules only available inside Blender's embedded Python.
+module = ["bpy", "bpy.*", "bmesh", "bmesh.*", "mathutils", "mathutils.*", "numpy", "numpy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["blender: renders with a real Blender installation (slow)"]
