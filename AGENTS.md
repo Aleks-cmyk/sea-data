@@ -33,7 +33,7 @@ A task is done only when all of these pass:
 
 - `uv run ruff format` leaves the code unchanged.
 - `uv run ruff check` reports no errors.
-- `uv run mypy main.py` reports no errors.
+- `uv run mypy` reports no errors.
 - `uv run pytest` passes, with a test added for every new endpoint.
 
 ## Constraints
