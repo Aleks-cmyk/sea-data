@@ -4,6 +4,11 @@ A :class:`Scenario` holds every random choice needed to build one image, so it
 can be serialised to JSON, handed to a Blender worker and reproduced exactly.
 """
 
+# Needed for Scenario.from_dict's self-referencing `-> Scenario` return type:
+# Python 3.14 evaluates annotations lazily by default (PEP 649), but Blender's
+# embedded Python is older and evaluates them eagerly, before the class exists.
+from __future__ import annotations
+
 import itertools
 import math
 import random
