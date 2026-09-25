@@ -72,7 +72,7 @@ def _load_annotation_config(output_dir: Path) -> AnnotationConfig:
     config_path = output_dir / "config.json"
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
-    except OSError, json.JSONDecodeError:
+    except (OSError, json.JSONDecodeError):
         return AnnotationConfig()
     try:
         return config_from_mapping(data).annotation

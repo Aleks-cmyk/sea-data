@@ -22,8 +22,6 @@ from pathlib import Path
 from sea_data.annotations import build_index
 from sea_data.config import ConfigError, SimulatorConfig, load_config
 from sea_data.scenario import Scenario, sample_scenarios
-from sea_data.verify import verify_dataset
-from sea_data.visualize import visualize_dataset
 
 WORKER_SCRIPT = Path(__file__).with_name("blender_worker.py")
 JOB_DIR = "jobs"
@@ -226,6 +224,33 @@ def _generate(args: argparse.Namespace, config: SimulatorConfig) -> int:
     return 0
 
 
+def _verify(args: argparse.Namespace) -> int:
+    from sea_data.verify import verify_dataset
+
+    issues = verify_dataset(args.output)
+    if not issues:
+        print(f"dataset ok: {args.output}")
+        return 0
+    for issue in issues:
+        print(issue)
+    return 1
+
+
+def _visualize(args: argparse.Namespace) -> int:
+    from sea_data.visualize import visualize_dataset
+
+    visualize_dataset(args.output, args.overlay_dir, args.limit)
+    return 0
+
+
+def _view(args: argparse.Namespace) -> int:
+    from sea_data.visualize import render_comparison
+
+    _ = render_comparison
+    print(f"view is not implemented yet: {args.output}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the ``sea-data`` command line.
 
@@ -245,12 +270,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
         if args.command == "verify":
+            from sea_data.verify import verify_dataset
+
             issues = verify_dataset(args.output)
             for issue in issues:
                 print(issue, file=sys.stderr)
             print(f"{len(issues)} issue(s) found in {args.output}")
             return 1 if issues else 0
         if args.command == "visualize":
+            from sea_data.visualize import visualize_dataset
+
             written = visualize_dataset(args.output, args.overlay_dir, args.limit)
             target = args.overlay_dir or args.output / "debug"
             print(f"wrote {len(written)} overlay image(s) to {target}")

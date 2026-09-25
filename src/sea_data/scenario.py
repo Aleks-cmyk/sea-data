@@ -3,6 +3,8 @@
 A :class:`Scenario` holds every random choice needed to build one image, so it
 can be serialised to JSON, handed to a Blender worker and reproduced exactly.
 """
+from __future__ import annotations
+
 
 import itertools
 import math
