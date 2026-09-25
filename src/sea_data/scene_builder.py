@@ -624,9 +624,12 @@ def _grid_mesh(
     rest.data.foreach_set("vector", verts.astype(np.float32).ravel())
     for attr_name, weights in ring_weights.items():
         attribute = mesh.attributes.new(attr_name, "FLOAT", "POINT")
-        attribute.data.foreach_set(
-            "value", np.repeat(weights, len(bearings)).astype(np.float32)
-        )
+        values = np.asarray(weights)
+        # A 1D array gives one weight per ring, repeated across every
+        # bearing; a 2D (radii x bearings) array is used directly, e.g. for
+        # weights that also vary with bearing such as land coverage.
+        flat = np.repeat(values, len(bearings)) if values.ndim == 1 else values.ravel()
+        attribute.data.foreach_set("value", flat.astype(np.float32))
     return mesh
 
 
@@ -635,41 +638,74 @@ def _smoothstep(edge0: float, edge1: float, x: Any) -> Any:
     return t * t * (3.0 - 2.0 * t)
 
 
+def _terrain_ridge(bearings: Any, seed: int, harmonics: int = 4) -> Any:
+    """Return a multi-harmonic ridge profile along a set of bearings.
+
+    Sums a handful of random sine waves to give a coastline an irregular,
+    hilly skyline instead of a flat plateau; roughly in ``[0.2, 1.8]``.
+
+    Args:
+        bearings: Column bearings of the sea grid, in radians.
+        seed: Seed for the harmonic amplitudes, phases and frequencies.
+        harmonics: Number of sine components to sum.
+
+    Returns:
+        Array of shape ``(len(bearings),)``.
+    """
+    rng = np.random.default_rng(seed)
+    span = max(float(bearings[-1] - bearings[0]), 1e-6)
+    position = (bearings - bearings[0]) / span
+    profile = np.ones_like(bearings)
+    for k in range(1, harmonics + 1):
+        amplitude = rng.uniform(0.12, 0.35) / k
+        phase = rng.uniform(0.0, 2.0 * np.pi)
+        cycles = k * rng.uniform(1.5, 3.0)
+        profile = profile + amplitude * np.sin(2.0 * np.pi * cycles * position + phase)
+    return np.clip(profile, 0.2, 1.8)
+
+
 def _land_offsets(
     radii: Any, bearings: Any, land: Land, horizon_m: float
-) -> Any | None:
-    """Return a per-vertex height offset for an optional coastline silhouette.
+) -> tuple[Any, Any] | tuple[None, None]:
+    """Return a per-vertex height offset and coverage mask for a coastline.
 
-    The silhouette sits in a band around ``0.5`` to ``0.9`` times the horizon
-    distance (well past where waves have already faded to their rest shape,
-    see :func:`_wave_fades`) and tapers to zero at both its angular edges, so
-    it never covers the full width of the visible horizon.
+    The silhouette starts at ``land.distance_factor`` times the horizon
+    distance (close to the camera for a nearby shoreline, near the horizon
+    for a distant one) and tapers to zero at both its angular edges, so it
+    never covers the full width of the visible horizon. Its skyline is
+    ridged rather than flat (see :func:`_terrain_ridge`).
 
     Args:
         radii: Ring radii of the sea grid, in metres.
         bearings: Column bearings of the sea grid, in radians.
-        land: Land parameters; ``height_offset`` is ``None`` when absent.
+        land: Land parameters.
         horizon_m: Distance to the geometric horizon, in metres.
 
     Returns:
-        Array of shape ``(len(radii), len(bearings))`` in metres, or ``None``
-        if no land was sampled for this scenario.
+        ``(height_offset, coverage)``, each of shape
+        ``(len(radii), len(bearings))``, or ``(None, None)`` if no land was
+        sampled for this scenario. ``coverage`` is the land footprint before
+        the ridge height variation, for suppressing waves and foam.
     """
     if not land.present:
-        return None
+        return None, None
     centre = math.radians(land.bearing_deg)
     half_width = math.radians(land.width_deg) / 2.0
     delta = np.abs(np.mod(bearings - centre + math.pi, 2.0 * math.pi) - math.pi)
     edge = max(0.2 * half_width, 1e-6)
     angular = 1.0 - _smoothstep(half_width - edge, half_width, delta)
 
-    near = 0.45 * horizon_m
-    plateau = near + 0.12 * horizon_m
-    far = min(float(radii[-1]) - 1.0, 0.92 * horizon_m)
-    fall = far - 0.05 * horizon_m
+    near = land.distance_factor * horizon_m
+    far = min(float(radii[-1]) - 1.0, horizon_m)
+    depth = max(far - near, 10.0)
+    plateau = near + 0.35 * depth
+    fall = far - 0.15 * depth
     radial = _smoothstep(near, plateau, radii) * (1.0 - _smoothstep(fall, far, radii))
 
-    return land.height_m * radial[:, None] * angular[None, :]
+    coverage = radial[:, None] * angular[None, :]
+    ridge = _terrain_ridge(bearings, land.seed)
+    height = land.height_m * coverage * ridge[None, :]
+    return height, coverage
 
 
 def _fade_node_group(rest_name: str, fade_name: str, store: str | None = None) -> Any:
@@ -725,11 +761,19 @@ def _sea_material(scenario: Scenario, haze: Any) -> Any:
     fade.attribute_name = "fade"
     foam = nodes.node("ShaderNodeAttribute", attribute_type="GEOMETRY")
     foam.attribute_name = "foam"
+    land = nodes.node("ShaderNodeAttribute", attribute_type="GEOMETRY")
+    land.attribute_name = "land"
+    not_land = nodes.math("SUBTRACT", 1.0, land.outputs["Fac"])
     # The foam layer is an sRGB byte colour, so the shader sees linear values.
+    # No whitecaps on land.
     foam_factor = nodes.math(
         "MULTIPLY",
-        nodes.map_range(foam.outputs["Fac"], 0.15, 0.7, 0.0, 1.0),
-        fade.outputs["Fac"],
+        nodes.math(
+            "MULTIPLY",
+            nodes.map_range(foam.outputs["Fac"], 0.15, 0.7, 0.0, 1.0),
+            fade.outputs["Fac"],
+        ),
+        not_land,
     )
 
     coords = nodes.node("ShaderNodeTexCoord").outputs["Object"]
@@ -742,17 +786,47 @@ def _sea_material(scenario: Scenario, haze: Any) -> Any:
     bump.inputs["Strength"].default_value = 1.0
     # Displaced geometry fades to flat towards the horizon (see _wave_fades);
     # boost the bump amplitude there so the surface keeps looking textured
-    # instead of turning into an unrealistic flat, calm band.
+    # instead of turning into an unrealistic flat, calm band. No ripples
+    # on land, which isn't water.
     base_distance = 0.02 + 0.05 * sea.beaufort
     fade_boost = nodes.map_range(fade.outputs["Fac"], 0.0, 1.0, 2.5, 1.0)
     nodes.link(
-        nodes.math("MULTIPLY", base_distance, fade_boost), bump.inputs["Distance"]
+        nodes.math(
+            "MULTIPLY", nodes.math("MULTIPLY", base_distance, fade_boost), not_land
+        ),
+        bump.inputs["Distance"],
     )
     nodes.link(ripples.outputs["Fac"], bump.inputs["Height"])
 
+    # Mottled land colour: two earthy tones mixed by a coarse noise texture.
+    land_noise = nodes.node("ShaderNodeTexNoise", noise_dimensions="3D")
+    land_noise.inputs["Scale"].default_value = 0.015
+    land_noise.inputs["Detail"].default_value = 4.0
+    land_noise.inputs["Roughness"].default_value = 0.6
+    nodes.link(coords, land_noise.inputs[0])
+    land_low = nodes.node("ShaderNodeRGB", label="land_low")
+    land_low.outputs[0].default_value = (0.05, 0.07, 0.025, 1.0)
+    land_high = nodes.node("ShaderNodeRGB", label="land_high")
+    land_high.outputs[0].default_value = (0.14, 0.12, 0.08, 1.0)
+    land_color = nodes.mix_color(
+        land_noise.outputs["Fac"], land_low.outputs[0], land_high.outputs[0]
+    )
+
+    water_rgb = nodes.node("ShaderNodeRGB", label="water_color")
+    water_rgb.outputs[0].default_value = (*sea.water_color, 1.0)
+    base_color = nodes.mix_color(land.outputs["Fac"], water_rgb.outputs[0], land_color)
+
+    water_roughness = 0.02 + 0.015 * sea.beaufort
+    land_roughness = 0.9
+    surface_roughness = nodes.math(
+        "ADD",
+        water_roughness,
+        nodes.math("MULTIPLY", land.outputs["Fac"], land_roughness - water_roughness),
+    )
+
     water = nodes.node("ShaderNodeBsdfPrincipled")
-    water.inputs["Base Color"].default_value = (*sea.water_color, 1.0)
-    water.inputs["Roughness"].default_value = 0.02 + 0.015 * sea.beaufort
+    nodes.link(base_color, water.inputs["Base Color"])
+    nodes.link(surface_roughness, water.inputs["Roughness"])
     water.inputs["IOR"].default_value = 1.333
     nodes.link(bump.outputs["Normal"], water.inputs["Normal"])
     whitecap = nodes.node("ShaderNodeBsdfPrincipled")
@@ -865,12 +939,23 @@ def build_sea(
         radii, swell_length, step, horizon_m, reach
     )
     chop_fade, _, _ = _wave_fades(radii, chop_length, step, horizon_m, reach)
-    land_offset = _land_offsets(radii, bearings, scenario.land, horizon_m)
+    land_offset, land_coverage = _land_offsets(
+        radii, bearings, scenario.land, horizon_m
+    )
+    # Land shouldn't have ocean waves riding over it, regardless of how far
+    # the wave-resolution fade above would otherwise reach.
+    if land_coverage is None:
+        mesh_chop_fade, mesh_swell_fade = chop_fade, swell_fade
+        land_attr = np.zeros((len(radii), len(bearings)))
+    else:
+        mesh_chop_fade = chop_fade[:, None] * (1.0 - land_coverage)
+        mesh_swell_fade = swell_fade[:, None] * (1.0 - land_coverage)
+        land_attr = land_coverage
     mesh = _grid_mesh(
         "Sea",
         radii,
         bearings,
-        {"fade": chop_fade, "fade_swell": swell_fade},
+        {"fade": mesh_chop_fade, "fade_swell": mesh_swell_fade, "land": land_attr},
         height_offset=land_offset,
     )
     obj = bpy.data.objects.new("Sea", mesh)

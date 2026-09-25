@@ -159,13 +159,16 @@ class SeaState:
 
 @dataclass(frozen=True)
 class Land:
-    """An optional distant coastline silhouette.
+    """An optional coastline or shoreline silhouette.
 
     Attributes:
         present: Whether land appears in this scenario.
         bearing_deg: Compass bearing of the coastline's centre.
         width_deg: Angular width of the coastline along the horizon.
         height_m: Silhouette height above mean sea level in metres.
+        distance_factor: Where the coastline starts, as a fraction of the
+            geometric horizon distance (low values place it close to the
+            camera, values near 1 place it at the horizon).
         seed: Seed for the terrain shape.
     """
 
@@ -173,6 +176,7 @@ class Land:
     bearing_deg: float = 0.0
     width_deg: float = 0.0
     height_m: float = 0.0
+    distance_factor: float = 0.0
     seed: int = 0
 
 
@@ -317,6 +321,7 @@ def _sample_land(
         bearing_deg=(camera.yaw_deg + rng.uniform(-0.4, 0.4) * hfov_deg) % 360.0,
         width_deg=min(_uniform(rng, config.land.width_deg), max_width),
         height_m=_uniform(rng, config.land.height_m),
+        distance_factor=_uniform(rng, config.land.distance_factor),
         seed=rng.randrange(2**16),
     )
 

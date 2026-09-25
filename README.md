@@ -82,9 +82,10 @@ min_transmittance = 0.05           # objects hidden by fog are not labelled
 min_horizon_transmittance = 0.08   # horizon blended into fog is marked not visible
 
 [land]
-probability = 0.3           # chance a distant coastline appears
+probability = 0.3               # chance a coastline appears (default: 0.65)
 height_m = [10.0, 120.0]
-width_deg = [20.0, 60.0]    # capped further so it never spans the full view
+width_deg = [20.0, 60.0]        # capped further so it never spans the full view
+distance_factor = [0.05, 0.6]   # fraction of horizon distance; low = close shoreline
 
 [weather.fog]
 weight = 0.3                # sampling weight; 0 disables a preset
@@ -115,7 +116,8 @@ The configuration used for a run is saved as `config.json` in the output.
   `valid: false`), the amodal box in white, and the horizon line in yellow
   drawn on top, plus a side panel listing horizon (`visible`, `transmittance`,
   `mask_error_px`, `mask_agreement`), atmosphere (weather, visibility, cloud
-  cover, aerosol density) and every object's category/distance/valid flag.
+  cover, aerosol density), land (present, bearing, width, height, distance)
+  and every object's category/distance/valid flag.
   Saves to `<dataset>/debug/` (override with `--overlay-dir`); open the PNGs
   with any image viewer, or pass `--limit N` to only render the first `N`
   images.
@@ -156,8 +158,10 @@ The configuration used for a run is saved as `config.json` in the output.
   haze and auto-exposure from a small calibration render. It also builds the
   sea: a curved polar-grid mesh with two FFT Ocean layers (swell and wind
   chop with whitecaps), each scaled to the WMO wave height for the wind
-  speed, with an optional distant coastline silhouette baked into the mesh
-  (`land` in the config; never spans the full horizon width).
+  speed, with an optional ridged coastline baked into the mesh (`land` in
+  the config; never spans the full horizon width, and can sit anywhere from
+  right off the bow to the horizon). Waves, foam and ripples are suppressed
+  over land, which gets its own mottled earthy material instead of water's.
 - `vessels.py` builds the objects and floats them on the evaluated wave
   surface (heave, pitch and roll).
 - `render.py` renders the RGB image and then a flat-shaded Workbench pass that

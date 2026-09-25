@@ -28,12 +28,16 @@ def _object(category: str = "motorboat", valid: bool = True) -> dict[str, Any]:
 
 
 def _frame(
-    stem: str, objects: list[dict[str, Any]], visible: bool = True
+    stem: str,
+    objects: list[dict[str, Any]],
+    visible: bool = True,
+    land: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "image": f"images/{stem}.png",
         "width": 40,
         "height": 80,
+        "camera": {"height_m": 10.0},
         "horizon": {
             "visible": visible,
             "endpoints": [[0.0, 4.0], [40.0, 6.0]] if visible else None,
@@ -48,7 +52,8 @@ def _frame(
                 "visibility_m": 8000.0,
                 "cloud_cover": 0.2,
                 "aerosol_density": 3.0,
-            }
+            },
+            "land": land or {"present": False},
         },
     }
 
@@ -86,6 +91,25 @@ def test_frame_metadata_lines_include_horizon_atmosphere_and_objects() -> None:
     assert "weather: hazy" in text
     assert "visibility_m: 8000" in text
     assert "motorboat 120m" in text
+    assert "present: False" in text
+
+
+def test_frame_metadata_lines_include_land_when_present() -> None:
+    land = {
+        "present": True,
+        "bearing_deg": 45.0,
+        "width_deg": 30.0,
+        "height_m": 60.0,
+        "distance_factor": 0.5,
+    }
+    frame = _frame("000000", [], land=land)
+    text = "\n".join(frame_metadata_lines(frame))
+    assert "present: True" in text
+    assert "bearing_deg: 45" in text
+    assert "width_deg: 30" in text
+    assert "height_m: 60" in text
+    assert "distance_m:" in text
+    assert "0.50x horizon" in text
 
 
 def test_visualize_dataset_writes_stacked_comparison(tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from sea_data.annotations import iter_frames
 from sea_data.config import CLASS_NAMES
+from sea_data.geometry import horizon_distance
 
 OVERLAY_DIR = "debug"
 
@@ -114,6 +115,23 @@ def _fmt(value: float | None, spec: str = ".3f") -> str:
     return "-" if value is None else format(value, spec)
 
 
+def _land_lines(land: Mapping[str, Any], camera: Mapping[str, Any]) -> list[str]:
+    if not land.get("present"):
+        return ["  present: False"]
+    lines = [
+        "  present: True",
+        f"  bearing_deg: {_fmt(land.get('bearing_deg'), '.0f')}",
+        f"  width_deg: {_fmt(land.get('width_deg'), '.0f')}",
+        f"  height_m: {_fmt(land.get('height_m'), '.0f')}",
+    ]
+    height_m = camera.get("height_m")
+    factor = land.get("distance_factor")
+    if height_m is not None and factor is not None:
+        distance_m = factor * horizon_distance(height_m)
+        lines.append(f"  distance_m: ~{distance_m:.0f} ({factor:.2f}x horizon)")
+    return lines
+
+
 def frame_metadata_lines(frame: Mapping[str, Any]) -> list[str]:
     """Format a frame's horizon, atmosphere and object fields as text lines.
 
@@ -124,7 +142,9 @@ def frame_metadata_lines(frame: Mapping[str, Any]) -> list[str]:
         Lines to print top to bottom, grouped by section.
     """
     horizon = frame["horizon"]
-    atmosphere = frame.get("scenario", {}).get("atmosphere", {})
+    scenario = frame.get("scenario", {})
+    atmosphere = scenario.get("atmosphere", {})
+    land = scenario.get("land", {})
     lines = [
         Path(frame["image"]).name,
         f"{frame['width']}x{frame['height']}",
@@ -140,6 +160,9 @@ def frame_metadata_lines(frame: Mapping[str, Any]) -> list[str]:
         f"  visibility_m: {_fmt(atmosphere.get('visibility_m'), '.0f')}",
         f"  cloud_cover: {_fmt(atmosphere.get('cloud_cover'), '.2f')}",
         f"  aerosol_density: {_fmt(atmosphere.get('aerosol_density'), '.2f')}",
+        "",
+        "Land",
+        *_land_lines(land, frame.get("camera", {})),
         "",
         f"Objects ({len(frame['objects'])})",
     ]

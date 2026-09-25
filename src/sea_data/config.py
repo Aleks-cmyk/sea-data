@@ -144,20 +144,25 @@ class AnnotationConfig:
 
 @dataclass(frozen=True)
 class LandConfig:
-    """Randomisation ranges for an optional distant coastline.
+    """Randomisation ranges for an optional coastline or shoreline.
 
-    A low silhouette is placed along part of the horizon, never across its
-    full width, so the sea horizon stays visible on at least one side.
+    A ridged silhouette is placed along part of the horizon, never across
+    its full width, so the sea horizon stays visible on at least one side.
 
     Attributes:
         probability: Chance that land appears in a given image.
         height_m: Silhouette height above mean sea level in metres.
         width_deg: Angular width of the coastline along the horizon.
+        distance_factor: Range of where the coastline starts, as a fraction
+            of the geometric horizon distance. Low values place it close to
+            the camera (a nearby shoreline); values near 1 place it right at
+            the horizon.
     """
 
-    probability: float = 0.2
-    height_m: Interval = (5.0, 80.0)
+    probability: float = 0.65
+    height_m: Interval = (5.0, 120.0)
     width_deg: Interval = (15.0, 70.0)
+    distance_factor: Interval = (0.05, 0.92)
 
 
 def _default_weather() -> dict[str, WeatherPreset]:
