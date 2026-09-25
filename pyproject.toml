@@ -3,6 +3,8 @@ name = "sea-data"
 version = "0.1.0"
 description = "Synthetic maritime images with object and horizon ground truth, rendered in Blender"
 readme = "README.md"
+license = "BSD-2-Clause"
+license-files = ["LICENSE"]
 authors = [
     { name = "Christian Rankl", email = "christian.rankl@gmail.com" }
 ]
