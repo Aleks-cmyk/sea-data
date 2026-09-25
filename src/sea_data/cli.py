@@ -224,33 +224,6 @@ def _generate(args: argparse.Namespace, config: SimulatorConfig) -> int:
     return 0
 
 
-def _verify(args: argparse.Namespace) -> int:
-    from sea_data.verify import verify_dataset
-
-    issues = verify_dataset(args.output)
-    if not issues:
-        print(f"dataset ok: {args.output}")
-        return 0
-    for issue in issues:
-        print(issue)
-    return 1
-
-
-def _visualize(args: argparse.Namespace) -> int:
-    from sea_data.visualize import visualize_dataset
-
-    visualize_dataset(args.output, args.overlay_dir, args.limit)
-    return 0
-
-
-def _view(args: argparse.Namespace) -> int:
-    from sea_data.visualize import render_comparison
-
-    _ = render_comparison
-    print(f"view is not implemented yet: {args.output}")
-    return 0
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the ``sea-data`` command line.
 
