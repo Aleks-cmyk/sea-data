@@ -16,6 +16,10 @@ from sea_data.scenario import (
 )
 
 
+def _bearing_delta(a: float, b: float) -> float:
+    return (a - b + 180.0) % 360.0 - 180.0
+
+
 def _sea(wind: float) -> SeaState:
     return SeaState(3, wind, 0.0, 1.0, 0.5, 0.0, (0.0, 0.0, 0.0), 1, 0.0)
 
@@ -105,3 +109,29 @@ def test_transmittance_follows_koschmieder() -> None:
     atmosphere = Atmosphere("fog", 1000.0, 1.0, 5.0, 0)
     assert atmosphere.transmittance(0.0) == 1.0
     assert atmosphere.transmittance(1000.0) == pytest.approx(0.02, abs=1e-3)
+
+
+def test_land_never_fully_covers_the_horizon() -> None:
+    config = config_from_mapping({"land": {"probability": 1.0}})
+    for index in range(50):
+        scenario = sample_scenario(config, 11, index)
+        land = scenario.land
+        assert land.present
+        assert land.width_deg <= 0.75 * scenario.hfov_deg + 1e-9
+        assert abs(_bearing_delta(land.bearing_deg, scenario.camera.yaw_deg)) <= (
+            0.4 * scenario.hfov_deg + 1e-9
+        )
+        low, high = config.land.height_m
+        assert low <= land.height_m <= high
+
+
+def test_land_is_absent_when_disabled() -> None:
+    config = config_from_mapping({"land": {"probability": 0.0}})
+    for index in range(20):
+        assert sample_scenario(config, 11, index).land.present is False
+
+
+def test_land_probability_is_respected() -> None:
+    config = config_from_mapping({"land": {"probability": 0.5}})
+    present = sum(sample_scenario(config, 21, i).land.present for i in range(400))
+    assert 150 <= present <= 250

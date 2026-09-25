@@ -255,7 +255,10 @@ def _object_record(
 
 
 def _horizon_record(
-    camera: PinholeCamera, scenario: Scenario, semantic: Any
+    camera: PinholeCamera,
+    scenario: Scenario,
+    semantic: Any,
+    annotation: AnnotationConfig,
 ) -> dict[str, Any]:
     horizon = horizon_line(camera)
     record = asdict(horizon)
@@ -265,6 +268,24 @@ def _horizon_record(
         if horizon.endpoints
         else (None, 0.0)
     )
+    if (
+        record["visible"]
+        and record["transmittance"] < annotation.min_horizon_transmittance
+    ):
+        # Fog/haze has blended the horizon into the sky so much that a human
+        # could not point to it, even though it is geometrically in frame.
+        record.update(
+            visible=False,
+            endpoints=None,
+            y_left=None,
+            y_right=None,
+            angle_deg=None,
+            offset_px=None,
+            points=(),
+            max_fit_error_px=None,
+            mask_error_px=None,
+            mask_agreement=0.0,
+        )
     return record
 
 
@@ -323,7 +344,7 @@ def render_scenario(
             "intrinsics": camera.intrinsics(),
             "matrix_world": camera.pose.matrix_world(),
         },
-        "horizon": _horizon_record(camera, scenario, semantic),
+        "horizon": _horizon_record(camera, scenario, semantic, annotation),
         "objects": [
             _object_record(item, instance, camera, scenario, annotation)
             for item in objects

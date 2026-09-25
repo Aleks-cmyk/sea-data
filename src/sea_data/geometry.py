@@ -26,6 +26,14 @@ from dataclasses import dataclass
 EARTH_RADIUS_M = 6_371_000.0
 """Mean Earth radius in metres."""
 
+MIN_HORIZON_SEGMENT_PX = 8.0
+"""Shortest in-image horizon segment still reported as visible.
+
+A line that only grazes a corner of the image (e.g. because the camera pitch
+pushes the horizon almost entirely above or below the frame) would otherwise
+satisfy the "at least two sample points inside the image" rule while being a
+sliver no human could actually point to."""
+
 type Vec3 = tuple[float, float, float]
 type Vec2 = tuple[float, float]
 type Mat3 = tuple[Vec3, Vec3, Vec3]
@@ -347,7 +355,8 @@ def horizon_line(
 
     Returns:
         The horizon annotation. ``visible`` is ``False`` when fewer than two
-        sampled horizon points fall inside the image.
+        sampled horizon points fall inside the image, or when the horizon
+        only grazes a corner for less than :data:`MIN_HORIZON_SEGMENT_PX`.
     """
     height_m = camera.pose.height_m
     dip = horizon_dip(height_m, radius_m)
@@ -366,6 +375,9 @@ def horizon_line(
         direction = (-direction[0], -direction[1])
     endpoints = clip_line_to_rect(origin, direction, camera.width, camera.height)
     if endpoints is None:
+        return base
+    (ex0, ey0), (ex1, ey1) = endpoints
+    if math.hypot(ex1 - ex0, ey1 - ey0) < MIN_HORIZON_SEGMENT_PX:
         return base
 
     normal = (-direction[1], direction[0])

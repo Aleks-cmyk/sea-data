@@ -110,6 +110,15 @@ def test_horizon_hidden_when_looking_at_the_sky() -> None:
     assert horizon.dip_deg > 0
 
 
+def test_horizon_hidden_when_only_grazing_a_corner() -> None:
+    camera = PinholeCamera(
+        640, 360, 70.0, CameraPose(height_m=20.0, pitch_deg=33.5, roll_deg=27.5)
+    )
+    horizon = horizon_line(camera)
+    assert not horizon.visible
+    assert horizon.endpoints is None
+
+
 def test_fit_line_and_clipping() -> None:
     origin, direction = fit_line([(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)])
     assert origin == pytest.approx((1.0, 2.0))

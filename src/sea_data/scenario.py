@@ -153,6 +153,25 @@ class SeaState:
 
 
 @dataclass(frozen=True)
+class Land:
+    """An optional distant coastline silhouette.
+
+    Attributes:
+        present: Whether land appears in this scenario.
+        bearing_deg: Compass bearing of the coastline's centre.
+        width_deg: Angular width of the coastline along the horizon.
+        height_m: Silhouette height above mean sea level in metres.
+        seed: Seed for the terrain shape.
+    """
+
+    present: bool
+    bearing_deg: float = 0.0
+    width_deg: float = 0.0
+    height_m: float = 0.0
+    seed: int = 0
+
+
+@dataclass(frozen=True)
 class PlacedObject:
     """An object placed on the sea surface.
 
@@ -192,6 +211,7 @@ class Scenario:
         atmosphere: Sky and visibility conditions.
         sea: Wave field parameters.
         objects: Objects placed in the scene.
+        land: Optional distant coastline silhouette.
         exposure_offset_ev: Random exposure deviation from the auto-exposure.
     """
 
@@ -204,6 +224,7 @@ class Scenario:
     atmosphere: Atmosphere
     sea: SeaState
     objects: tuple[PlacedObject, ...]
+    land: Land
     exposure_offset_ev: float = 0.0
 
     @property
@@ -241,6 +262,7 @@ class Scenario:
             atmosphere=Atmosphere(**data["atmosphere"]),
             sea=SeaState(**sea),
             objects=tuple(PlacedObject(**o) for o in data["objects"]),
+            land=Land(**data["land"]),
             exposure_offset_ev=data.get("exposure_offset_ev", 0.0),
         )
 
@@ -276,6 +298,21 @@ def _sample_sea(rng: random.Random, config: SimulatorConfig) -> SeaState:
         water_color=(base[0] * tint, base[1] * tint, base[2] * tint),
         ocean_seed=rng.randrange(1, 2**16),
         time_s=rng.uniform(0.0, 1000.0),
+    )
+
+
+def _sample_land(
+    rng: random.Random, config: SimulatorConfig, camera: CameraPose, hfov_deg: float
+) -> Land:
+    if rng.random() >= config.land.probability:
+        return Land(present=False)
+    max_width = max(10.0, 0.75 * hfov_deg)
+    return Land(
+        present=True,
+        bearing_deg=(camera.yaw_deg + rng.uniform(-0.4, 0.4) * hfov_deg) % 360.0,
+        width_deg=min(_uniform(rng, config.land.width_deg), max_width),
+        height_m=_uniform(rng, config.land.height_m),
+        seed=rng.randrange(2**16),
     )
 
 
@@ -358,6 +395,7 @@ def sample_scenario(config: SimulatorConfig, seed: int, index: int) -> Scenario:
     )
     sea = _sample_sea(rng, config)
     objects = _sample_objects(rng, config, camera, hfov)
+    land = _sample_land(rng, config, camera, hfov)
     return Scenario(
         index=index,
         seed=seed,
@@ -368,6 +406,7 @@ def sample_scenario(config: SimulatorConfig, seed: int, index: int) -> Scenario:
         atmosphere=atmosphere,
         sea=sea,
         objects=objects,
+        land=land,
         exposure_offset_ev=rng.gauss(0.0, config.render.exposure_jitter_ev),
     )
 
