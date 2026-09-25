@@ -136,3 +136,7 @@ uv run pytest          # includes a small real Blender render if Blender is inst
   streaks in the middle distance.
 - Night scenes, rain and camera noise are not simulated. Sensor effects are
   best added as training-time augmentation.
+
+## License
+
+BSD 2-Clause License, see [LICENSE](LICENSE).
