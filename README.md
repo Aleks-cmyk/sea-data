@@ -82,10 +82,11 @@ min_transmittance = 0.05           # objects hidden by fog are not labelled
 min_horizon_transmittance = 0.08   # horizon blended into fog is marked not visible
 
 [land]
-probability = 0.3               # chance a coastline appears (default: 0.65)
-height_m = [10.0, 120.0]
+probability = 0.3               # chance a coastline appears (default: 0.85)
+height_m = [10.0, 120.0]        # default: [25.0, 220.0]
 width_deg = [20.0, 60.0]        # capped further so it never spans the full view
-distance_factor = [0.05, 0.6]   # fraction of horizon distance; low = close shoreline
+distance_factor = [0.05, 0.6]   # fraction of horizon distance; default favours
+                                 # close (an island the camera is approaching)
 
 [weather.fog]
 weight = 0.3                # sampling weight; 0 disables a preset

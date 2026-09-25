@@ -148,6 +148,8 @@ class LandConfig:
 
     A ridged silhouette is placed along part of the horizon, never across
     its full width, so the sea horizon stays visible on at least one side.
+    Defaults favour a prominent, nearby island or shoreline rather than a
+    thin sliver at the horizon.
 
     Attributes:
         probability: Chance that land appears in a given image.
@@ -159,10 +161,10 @@ class LandConfig:
             the horizon.
     """
 
-    probability: float = 0.65
-    height_m: Interval = (5.0, 120.0)
+    probability: float = 0.85
+    height_m: Interval = (25.0, 220.0)
     width_deg: Interval = (15.0, 70.0)
-    distance_factor: Interval = (0.05, 0.92)
+    distance_factor: Interval = (0.05, 0.35)
 
 
 def _default_weather() -> dict[str, WeatherPreset]:
